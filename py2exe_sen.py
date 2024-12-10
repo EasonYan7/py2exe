@@ -3,11 +3,13 @@ import os
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext
 from tkinter import ttk
-import PyInstaller.__main__
 import threading
 import subprocess
 
 class PyToExeConverter:
+    """
+    A GUI tool to convert Python scripts to standalone EXE files using PyInstaller.
+    """
     def __init__(self):
         self.window = tk.Tk()
         self.window.title("Python to EXE Converter")
@@ -112,16 +114,21 @@ class PyToExeConverter:
         self.icon_entry.config(state=state)
         self.icon_button.config(state=state)
 
+    def update_console_async(self, text):
+        """Schedule console update in the main thread."""
+        self.window.after(0, self.update_console, text)
+
     def update_console(self, text):
+        """Update the console output with given text."""
         self.console.insert(tk.END, text + '\n')
         self.console.see(tk.END)
-        self.window.update()
 
     def start_conversion(self):
-        # Run conversion in a separate thread
+        """Start the conversion in a separate thread."""
         threading.Thread(target=self.convert_to_exe, daemon=True).start()
 
     def convert_to_exe(self):
+        # Validate inputs
         if not self.py_path.get():
             messagebox.showerror("Error", "Please select a Python file!")
             return
@@ -134,32 +141,36 @@ class PyToExeConverter:
             messagebox.showerror("Error", "Please select an icon file or uncheck the icon option!")
             return
 
+        # Disable button and reset progress
         self.convert_button.config(state="disabled")
         self.progress["value"] = 0
         self.status_label.config(text="Converting... Please wait...")
         self.console.delete(1.0, tk.END)
-        self.window.update()
+
+        # Build PyInstaller command
+        commands = [
+            '--name=' + self.output_name.get(),
+            '--distpath=' + self.output_dir.get()
+        ]
+
+        # Add options based on user selections
+        if self.one_file_var.get():
+            commands.append('--onefile')
+        if not self.console_var.get():
+            commands.append('--windowed')
+        if self.debug_var.get():
+            commands.append('--debug=all')
+        if self.use_icon.get():
+            commands.extend(['--icon', self.icon_path.get()])
+
+        # If you need hidden imports, uncomment and adjust the line below:
+        commands.extend(['--hidden-import=win32timezone'])
+
+        # Add the script file last
+        commands.append(self.py_path.get())
 
         try:
-            commands = [
-                self.py_path.get(),
-                f'--name={self.output_name.get()}',
-                f'--distpath={self.output_dir.get()}'
-            ]
-
-            if self.one_file_var.get():
-                commands.append('--onefile')
-            
-            if not self.console_var.get():
-                commands.append('--windowed')
-                
-            if self.debug_var.get():
-                commands.append('--debug=all')
-
-            if self.use_icon.get():
-                commands.extend(['--icon', self.icon_path.get()])
-
-            # Create process
+            # Run PyInstaller process
             process = subprocess.Popen(
                 [sys.executable, '-m', 'PyInstaller'] + commands,
                 stdout=subprocess.PIPE,
@@ -167,13 +178,14 @@ class PyToExeConverter:
                 universal_newlines=True
             )
 
-            # Read output
+            # Read output line by line
             while True:
                 output = process.stdout.readline()
                 if output == '' and process.poll() is not None:
                     break
                 if output:
-                    self.update_console(output.strip())
+                    self.update_console_async(output.strip())
+                    # Simple heuristic for progress
                     if "Building EXE" in output:
                         self.progress["value"] = 50
                     elif "Building completed" in output:
@@ -182,23 +194,30 @@ class PyToExeConverter:
             exe_path = os.path.join(self.output_dir.get(), self.output_name.get() + '.exe')
             if os.path.exists(exe_path):
                 self.status_label.config(text="Conversion completed successfully!")
-                self.update_console(f"\nEXE created successfully at:\n{exe_path}")
-                messagebox.showinfo("Success", f"EXE file created successfully at:\n{exe_path}")
+                self.update_console_async(f"\nEXE created successfully at:\n{exe_path}")
+                self.window.after(0, lambda: messagebox.showinfo("Success", f"EXE file created successfully at:\n{exe_path}"))
             else:
                 raise Exception("EXE file not found after build")
             
         except Exception as e:
             self.progress["value"] = 0
             self.status_label.config(text="Conversion failed!")
-            self.update_console(f"\nError: {str(e)}")
-            messagebox.showerror("Error", f"An error occurred: {str(e)}")
+            self.update_console_async(f"\nError: {str(e)}")
+            self.window.after(0, lambda: messagebox.showerror("Error", f"An error occurred: {str(e)}"))
         
         finally:
-            self.convert_button.config(state="normal")
+            self.window.after(0, lambda: self.convert_button.config(state="normal"))
 
     def run(self):
         self.window.mainloop()
 
 if __name__ == "__main__":
+    # Optional: Check if PyInstaller is installed
+    try:
+        __import__('PyInstaller')
+    except ImportError:
+        messagebox.showerror("Error", "PyInstaller not found. Please install it using 'pip install pyinstaller' before proceeding.")
+        sys.exit(1)
+
     app = PyToExeConverter()
     app.run()
